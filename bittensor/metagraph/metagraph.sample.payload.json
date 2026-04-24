@@ -1,0 +1,8 @@
+{
+  "moduleUrl": "https://widgets.taoradar.space/bittensor/metagraph/index.js",
+  "manifestUrl": "https://widgets.taoradar.space/bittensor/metagraph/manifest.json",
+  "cacheKey": "metagraph_main",
+  "params": {
+    "message": "Hello from payload"
+  }
+}

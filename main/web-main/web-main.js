@@ -13,12 +13,14 @@ const DEFAULT_LIBRARY_BASE_URL =
 const libraryBaseUrl = DEFAULT_LIBRARY_BASE_URL
 
 const launcherLibraryInfo = {
-    moduleUrl: buildLibraryResourceUrl(libraryBaseUrl, 'launcher.js'),
+    moduleUrl: buildLibraryResourceUrl(libraryBaseUrl, 'launcher/index.js'),
+    manifestUrl: buildLibraryResourceUrl(libraryBaseUrl, 'launcher/manifest.json'),
     cacheKey: 'launcher_main',
 }
 
 const moduleLoaderLibraryInfo = {
-    moduleUrl: buildLibraryResourceUrl(libraryBaseUrl, 'module-loader.js'),
+    moduleUrl: buildLibraryResourceUrl(libraryBaseUrl, 'module-loader/index.js'),
+    manifestUrl: buildLibraryResourceUrl(libraryBaseUrl, 'module-loader/manifest.json'),
     cacheKey: 'module-loader_main',
 }
 
@@ -68,9 +70,10 @@ async function importBootstrapModule(library) {
 
     const fileName = `${library.cacheKey || 'module'}.js`
     const localPath = fm.joinPath(moduleDir, fileName)
+    const localVersionCachePath = fm.joinPath(moduleDir, `${fileName}.version.json`)
     const relativeModulePath = `${fm.fileName(scriptPath, false)}/${fileName}`
     const hasLocal = fm.fileExists(localPath)
-    const localVersion = readImportedModuleVersion(importModule, relativeModulePath)
+    const localVersion = readLocalCachedVersion(fm, localVersionCachePath)
     let remoteVersion = null
 
     try {
@@ -93,7 +96,7 @@ async function importBootstrapModule(library) {
         log('[loader] bootstrap versions match, using local module')
         return importModule(relativeModulePath)
     }
-    if (hasLocal && localVersion && !remoteVersion) {
+    if (hasLocal && !remoteVersion) {
         log('[loader] bootstrap manifest unavailable, using local module')
         return importModule(relativeModulePath)
     }
@@ -114,6 +117,9 @@ async function importBootstrapModule(library) {
     }
 
     fm.write(localPath, Data.fromString(remoteContent))
+    if (remoteVersion) {
+        fm.write(localVersionCachePath, Data.fromString(JSON.stringify({ version: remoteVersion })))
+    }
     log('[loader] downloaded bootstrap module')
     return importModule(relativeModulePath)
 }
@@ -144,10 +150,13 @@ function deriveManifestUrlFromModuleUrl(moduleUrl) {
     return query ? `${manifestPath}?${query}` : manifestPath
 }
 
-function readImportedModuleVersion(importModuleFn, relativeModulePath) {
+function readLocalCachedVersion(fm, cachePath) {
     try {
-        const localModule = importModuleFn(relativeModulePath)
-        return localModule && typeof localModule.version === 'string' ? localModule.version : null
+        if (!fm.fileExists(cachePath)) {
+            return null
+        }
+        const json = JSON.parse(fm.readString(cachePath))
+        return json && typeof json.version === 'string' ? json.version : null
     } catch (error) {
         return null
     }

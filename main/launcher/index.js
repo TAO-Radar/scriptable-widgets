@@ -1,11 +1,12 @@
-const version = '0.0.1'
+const DEFAULT_LOADER_VERSION = '0.0.1'
 const DEFAULT_WELCOME_PARAM = 'widgetParameter (base64 payload)'
 const ALLOWED_WIDGET_FAMILIES = ['small', 'medium', 'large']
 const LIBRARY_BASE_URL =
-    'https://gitlab.com/tao-radar/scriptable-widgets/-/jobs/artifacts/main/raw/dist/raw/main?job=package_scriptable_artifacts'
+    'https://widgets.taoradar.space/main'
 
 const welcomeLibraryInfo = {
-    moduleUrl: buildLibraryResourceUrl(LIBRARY_BASE_URL, 'welcome.js'),
+    moduleUrl: buildLibraryResourceUrl(LIBRARY_BASE_URL, 'welcome/index.js'),
+    manifestUrl: buildLibraryResourceUrl(LIBRARY_BASE_URL, 'welcome/manifest.json'),
     cacheKey: 'welcome_main',
 }
 
@@ -25,7 +26,7 @@ async function launch(params = {}) {
             const welcomeParams = {
                 widgetParameter: DEFAULT_WELCOME_PARAM,
                 debug: !!params.debug,
-                loaderVersion: String(params.loaderVersion || version),
+                loaderVersion: String(params.loaderVersion || DEFAULT_LOADER_VERSION),
             }
             const familyError = validateFamilySupport(welcomeLibrary, runtimeConfig.widgetFamily)
             if (familyError) {
@@ -110,7 +111,7 @@ async function launch(params = {}) {
             debug: !!params.debug,
             apiKey: params.apiKey,
             apiProvider: params.apiProvider,
-            loaderVersion: String(params.loaderVersion || version),
+            loaderVersion: String(params.loaderVersion || DEFAULT_LOADER_VERSION),
             widgetPayload: payload,
             ...childParams,
             ...runtimeConfig,
@@ -251,6 +252,5 @@ function buildLibraryResourceUrl(baseUrl, fileName) {
 }
 
 module.exports = {
-    version,
     launch,
 }

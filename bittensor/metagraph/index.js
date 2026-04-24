@@ -2,7 +2,6 @@
 // These must be at the very top of the file. Do not edit.
 // icon-color: blue; icon-glyph: cube;
 
-const version = '0.0.1'
 const supportedFamilies = ['small', 'medium', 'large']
 const widgetParameter = 'message'
 
@@ -27,7 +26,7 @@ async function createWidget(params = {}) {
 
     if (family !== 'small') {
         widget.addSpacer(6)
-        const hint = widget.addText('Powered by metagraph-new.js')
+        const hint = widget.addText('Powered by metagraph.js')
         hint.font = Font.systemFont(10)
         hint.textColor = Color.gray()
         hint.centerAlignText()
@@ -55,7 +54,6 @@ function resolveMessage(params) {
 }
 
 module.exports = {
-    version,
     supportedFamilies,
     widgetParameter,
     createWidget,

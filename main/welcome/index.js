@@ -3,7 +3,6 @@
 // icon-color: pink; icon-glyph: magic;
 //@ts-check
 
-const version = '0.0.3'
 const supportedFamilies = ['small', 'medium', 'large']
 
 /**
@@ -91,7 +90,6 @@ async function createWidget(config) {
 }
 
 module.exports = {
-    version,
     supportedFamilies,
     createWidget
 }

@@ -1,11 +1,8 @@
-const version = '0.0.1'
-
 async function importVersionedModule(params = {}) {
     const library = params.library || {}
     const scriptPath = params.scriptPath || (module && module.filename ? module.filename : '')
     const debug = !!params.debug
     const logLabel = params.logLabel || 'module-loader'
-    const importModuleFn = typeof params.importModuleFn === 'function' ? params.importModuleFn : null
     const log = debug ? console.log.bind(console) : function () { }
     const stageTracker = createStageTracker(logLabel, log)
 
@@ -26,13 +23,7 @@ async function importVersionedModule(params = {}) {
     const relativeModulePath = `${fm.fileName(scriptPath, false)}/${fileName}`
     const hasLocal = fm.fileExists(localPath)
 
-    const localVersion = readLocalVersion({
-        fm,
-        cachePath: localVersionCachePath,
-        modulePath: localPath,
-        importModuleFn,
-        relativeModulePath,
-    })
+    const localVersion = readLocalCachedVersion(fm, localVersionCachePath)
     log(`[${logLabel}] local module: ${fileName}, hasLocal=${hasLocal}, localVersion=${localVersion || 'unknown'}`)
 
     let remoteVersion = null
@@ -56,7 +47,7 @@ async function importVersionedModule(params = {}) {
         log(`[${logLabel}] versions match, using local module`)
         return relativeModulePath
     }
-    if (hasLocal && localVersion && !remoteVersion) {
+    if (hasLocal && !remoteVersion) {
         log(`[${logLabel}] manifest unavailable, using local module`)
         return relativeModulePath
     }
@@ -151,24 +142,6 @@ function isValidManifest(manifest) {
     return !!manifest && typeof manifest === 'object' && typeof manifest.version === 'string'
 }
 
-function readLocalVersion(params) {
-    const fm = params.fm
-    const cachePath = params.cachePath
-    const modulePath = params.modulePath
-    const importModuleFn = params.importModuleFn
-    const relativeModulePath = params.relativeModulePath
-
-    const cachedVersion = readLocalCachedVersion(fm, cachePath)
-    if (cachedVersion) {
-        return cachedVersion
-    }
-    const importedModuleVersion = readImportedModuleVersion(importModuleFn, relativeModulePath)
-    if (importedModuleVersion) {
-        return importedModuleVersion
-    }
-    return readLocalModuleVersion(fm, modulePath)
-}
-
 function readLocalCachedVersion(fm, cachePath) {
     if (!fm.fileExists(cachePath)) {
         return null
@@ -182,40 +155,7 @@ function readLocalCachedVersion(fm, cachePath) {
     }
 }
 
-function readLocalModuleVersion(fm, modulePath) {
-    if (!fm.fileExists(modulePath)) {
-        return null
-    }
-    try {
-        const content = fm.readString(modulePath)
-        const constVersionMatch = content.match(/const\s+version\s*=\s*['"]([^'"]+)['"]/)
-        if (constVersionMatch && constVersionMatch[1]) {
-            return constVersionMatch[1]
-        }
-        const exportsVersionMatch = content.match(/version\s*:\s*['"]([^'"]+)['"]/)
-        if (exportsVersionMatch && exportsVersionMatch[1]) {
-            return exportsVersionMatch[1]
-        }
-        return null
-    } catch (error) {
-        return null
-    }
-}
-
-function readImportedModuleVersion(importModuleFn, relativeModulePath) {
-    if (!importModuleFn || !relativeModulePath) {
-        return null
-    }
-    try {
-        const localModule = importModuleFn(relativeModulePath)
-        return localModule && typeof localModule.version === 'string' ? localModule.version : null
-    } catch (error) {
-        return null
-    }
-}
-
 module.exports = {
-    version,
     importVersionedModule,
     buildLibraryUrl,
     buildLibraryManifestUrl,
