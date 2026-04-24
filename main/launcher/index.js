@@ -87,10 +87,7 @@ async function launch(params = {}) {
         })
         const targetLibrary = importModule(targetModulePath)
 
-        const childParams =
-            payload.params && typeof payload.params === 'object' && !Array.isArray(payload.params)
-                ? payload.params
-                : {}
+        const childParams = normalizeChildParams(payload.params)
         const libraryWidgetParam =
             targetLibrary && typeof targetLibrary.widgetParameter === 'string'
                 ? targetLibrary.widgetParameter.trim()
@@ -107,12 +104,11 @@ async function launch(params = {}) {
         }
 
         const createWidgetParams = {
-            widgetParameter: resolvedWidgetParam,
             debug: !!params.debug,
             apiKey: params.apiKey,
             apiProvider: params.apiProvider,
             loaderVersion: String(params.loaderVersion || DEFAULT_LOADER_VERSION),
-            widgetPayload: payload,
+            params: childParams,
             ...childParams,
             ...runtimeConfig,
         }
@@ -195,6 +191,13 @@ function resolveWidgetParameter(requiredParamName, childParams) {
         return String(childParams.widgetParameter ?? '')
     }
     return ''
+}
+
+function normalizeChildParams(rawParams) {
+    if (!rawParams || typeof rawParams !== 'object' || Array.isArray(rawParams)) {
+        return {}
+    }
+    return rawParams
 }
 
 function validateFamilySupport(library, requestedFamilyRaw) {

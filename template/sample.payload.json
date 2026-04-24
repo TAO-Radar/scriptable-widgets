@@ -1,0 +1,9 @@
+{
+  "moduleUrl": "https://widgets.taoradar.space/template/index.js",
+  "manifestUrl": "https://widgets.taoradar.space/template/manifest.json",
+  "cacheKey": "template_main",
+  "params": {
+    "message": "Template payload test",
+    "widgetParameter": "demo-value"
+  }
+}

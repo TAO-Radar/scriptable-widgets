@@ -3,7 +3,7 @@
 // icon-color: red; icon-glyph: download;
 
 const DEBUG = !config.runsInWidget
-const version = '2.0.0'
+const loaderVersionLabel = '2.0.0'
 const log = DEBUG ? console.log.bind(console) : function () { }
 
 const apiKey = '${API_KEY}'
@@ -31,7 +31,7 @@ const launcherConfig = {
     apiProvider,
     libraryBaseUrl,
     debug: DEBUG,
-    loaderVersion: version,
+    loaderVersion: loaderVersionLabel,
 }
 
 const hasInjectedApiKey = apiKey && apiKey.trim().length > 0 && !apiKey.startsWith('${')
