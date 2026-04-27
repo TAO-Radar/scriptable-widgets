@@ -369,7 +369,7 @@ function drawTable(frame, rows, currencies) {
 
   if (rows.length > 1) {
     const totals = calculatePortfolioTotals(rows);
-    addText(colAddr, "∑ Total", ENV.fonts.value, ENV.colors.gray, true);
+    addText(colAddr, "∑ Total", ENV.fonts.value, ENV.colors.white, true);
     addText(colTotal, formatValueByCurrencies(totals, "total", currencies), ENV.fonts.value, ENV.colors.white, true);
     addText(
       colDaily,
@@ -606,12 +606,12 @@ function pnlPrimaryChange(row, currencies) {
   return NaN;
 }
 
-/** Gray when primary PnL is positive; error red otherwise (including zero, negative, or missing). */
+/** Cyan when primary PnL is positive; error red otherwise (including zero, negative, or missing). */
 function dailyChangeColor(row, currencies) {
   if (row && row.error) return ENV.colors.err;
   const v = pnlPrimaryChange(row, currencies);
   if (!Number.isFinite(v)) return ENV.colors.err;
-  return v > 0 ? ENV.colors.gray : ENV.colors.err;
+  return v > 0 ? ENV.colors.cyan_green : ENV.colors.err;
 }
 
 /** Sums balances across non-error rows (all configured addresses). */
