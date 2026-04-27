@@ -1,0 +1,12 @@
+{
+  "moduleUrl": "https://widgets.taoradar.space/bittensor/portfolio/index.js",
+  "manifestUrl": "https://widgets.taoradar.space/bittensor/portfolio/manifest.json",
+  "cacheKey": "portfolio_main",
+  "params": {
+    "currencies": ["TAO", "USD"],
+    "addresses": [
+      "5F3sa2TJAWMqDhXG6jhV4N8ko9hY3b9A1F5k8Qk2L9V7QxYh",
+      "5DAAnrj7VHTz5VQF7Q5kXw9mW1hR7k2nN8vK9sB2xP4eLzN"
+    ]
+  }
+}
