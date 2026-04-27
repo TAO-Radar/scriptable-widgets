@@ -24,7 +24,7 @@ const version = "1.0.3";
  * No single required widget parameter; use payload.params.
  */
 const widgetParameter = "";
-const supportedFamilies = ["small", "large"];
+const supportedFamilies = ["small", "medium", "large"];
 
 // ============================
 // API
@@ -87,43 +87,19 @@ const VALID_CURRENCIES = ["TAO", "USD"];
  */
 async function createWidget({
   params = {},
-  debug = false,
+  debug: _debug = false,
   widgetFamily = "large",
   apiProvider,
   loaderVersion,
   ...rest
 } = {}) {
-  const log = debug ? console.log.bind(console) : () => {};
-  const normalizedParams =
-    params && typeof params === "object" && !Array.isArray(params)
-      ? /** @type {Record<string, unknown>} */ (params)
-      : {};
-
-  const addresses = normalizeAddresses(
-    normalizedParams.addresses !== undefined ? normalizedParams.addresses : rest.addresses
-  );
-  const currencies = normalizeCurrencies(
-    normalizedParams.currencies !== undefined ? normalizedParams.currencies : rest.currencies
-  );
-  log(
-    JSON.stringify(
-      {
-        widgetFamily,
-        apiProvider,
-        loaderVersion,
-        addressesCount: addresses.length,
-        currencies,
-      },
-      null,
-      2
-    )
-  );
+  const normalizedParams = coercePlainParams(params);
+  const { addresses, currencies } = resolvePortfolioLauncherArgs(normalizedParams, rest);
 
   if (addresses.length === 0) {
     return createErrorWidget(
       `Missing addresses.\n` +
-        `Provide "addresses" via payload.params.\n` +
-        `Supported: array or comma/newline separated string.`
+        `Set "addresses" in payload.params or at the payload JSON root (array or comma/newline string).`
     );
   }
 
@@ -160,12 +136,7 @@ async function launch(params = {}) {
         ? globalConfig
         : {};
 
-  const initialParams =
-    params.params && typeof params.params === "object" && !Array.isArray(params.params)
-      ? /** @type {Record<string, unknown>} */ (params.params)
-      : {};
-
-  let normalizedParams = { ...initialParams };
+  let normalizedParams = { ...initialParamsFromLaunchRoot(params) };
   if (!runtimeConfig.runsInWidget) {
     const userInput = await promptForStandaloneInput({
       defaultAddresses:
@@ -524,12 +495,12 @@ function createErrorWidget(message) {
   stack.layoutVertically();
   stack.centerAlignContent();
 
-  addText(stack, "⚠️ Error", ENV.fonts.errorTitle, ENV.colors.err, true);
+  addText(stack, "⚠️ Error", ENV.fonts.errorTitle, ENV.colors.err, true, 1);
   stack.addSpacer(10);
 
   String(message)
     .split("\n")
-    .forEach((line) => addText(stack, line, ENV.fonts.default, ENV.colors.gray));
+    .forEach((line) => addText(stack, line || " ", ENV.fonts.default, ENV.colors.gray, false, 12));
 
   return widget;
 }
@@ -547,11 +518,12 @@ function drawTimeUpdated(stack) {
   timeStack.addSpacer();
 }
 
-function addText(frame, text, size, color, isSemibold = false) {
+/** @param {number} [lineLimit] Max lines for this text (default 1). */
+function addText(frame, text, size, color, isSemibold = false, lineLimit = 1) {
   const t = frame.addText(String(text));
   t.font = isSemibold ? Font.semiboldSystemFont(size) : Font.systemFont(size);
   t.textColor = color;
-  t.lineLimit = 1;
+  t.lineLimit = lineLimit;
 }
 
 // ============================
@@ -681,6 +653,86 @@ function calculatePortfolioTotals(rows) {
   };
 }
 
+function coercePlainParams(value) {
+  if (value == null) {
+    return {};
+  }
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (!t) {
+      return {};
+    }
+    try {
+      const p = JSON.parse(t);
+      if (p && typeof p === "object" && !Array.isArray(p)) {
+        return /** @type {Record<string, unknown>} */ (p);
+      }
+    } catch (_) {}
+    return {};
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return /** @type {Record<string, unknown>} */ (value);
+  }
+  return {};
+}
+
+const LAUNCH_ROOT_META = new Set([
+  "widgetParameter",
+  "fileURLs",
+  "queryParameters",
+  "when",
+  "params",
+]);
+
+/** When portfolio.js is the Script entry (not the loader), merge `config.params`, `args`, and `params.params`. */
+function initialParamsFromLaunchRoot(root) {
+  const r = root && typeof root === "object" ? root : {};
+  const fromParams = coercePlainParams(r.params);
+  const args =
+    r.args && typeof r.args === "object" && !Array.isArray(r.args) ? r.args : {};
+  const fromArgsParams = coercePlainParams(args.params);
+  const fromArgsRoot = /** @type {Record<string, unknown>} */ ({});
+  for (const k of Object.keys(args)) {
+    if (LAUNCH_ROOT_META.has(k)) continue;
+    fromArgsRoot[k] = args[k];
+  }
+  const cfg =
+    r.config && typeof r.config === "object" && !Array.isArray(r.config) ? r.config : {};
+  const fromConfigParams = coercePlainParams(cfg.params);
+  return { ...fromConfigParams, ...fromArgsParams, ...fromArgsRoot, ...fromParams };
+}
+
+/**
+ * Launcher may pass payload fields in `params`, flattened on `rest`, or only under `rest.params`
+ * (Scriptable config). Prefer the first source that yields real addresses / currencies.
+ */
+function resolvePortfolioLauncherArgs(normalizedParams, rest) {
+  const nested = coercePlainParams(rest.params);
+
+  let addresses = [];
+  for (const candidate of [normalizedParams.addresses, rest.addresses, nested.addresses]) {
+    const next = normalizeAddresses(candidate);
+    if (next.length > 0) {
+      addresses = next;
+      break;
+    }
+  }
+
+  let currencies = null;
+  for (const candidate of [normalizedParams.currencies, rest.currencies, nested.currencies]) {
+    if (candidate === undefined) continue;
+    if (Array.isArray(candidate) && candidate.length === 0) continue;
+    if (typeof candidate === "string" && !String(candidate).trim()) continue;
+    currencies = normalizeCurrencies(candidate);
+    break;
+  }
+  if (!currencies) {
+    currencies = normalizeCurrencies(undefined);
+  }
+
+  return { addresses, currencies };
+}
+
 function normalizeAddresses(value) {
   if (Array.isArray(value)) {
     return Array.from(
@@ -739,7 +791,7 @@ if (typeof Script !== "undefined") {
       await launch({
         config: typeof globalConfig !== "undefined" ? globalConfig : {},
         args: typeof globalArgs !== "undefined" ? globalArgs : {},
-        debug: true,
+        debug: false,
       });
     } catch (error) {
       const errorWidget = createErrorWidget(`Error: ${error?.message || String(error)}`);

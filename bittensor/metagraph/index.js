@@ -4,7 +4,7 @@
 
 const version = '0.1.9';
 const widgetParameter = '';
-const supportedFamilies = ['small', 'large'];
+const supportedFamilies = ['small', 'medium', 'large'];
 const DEFAULT_API_CONFIG = {
   taoStatsBaseUrl: 'https://notaostats.taoradar.space/api',
   getTaoPriceUrl: 'https://api.binance.com/api/v3/ticker/price?symbol=TAOUSDT',

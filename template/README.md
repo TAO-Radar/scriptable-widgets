@@ -60,14 +60,16 @@ The launcher calls `createWidget(params)` with:
 - Scriptable runtime config fields (for example `widgetFamily`, `runsInWidget`)
 - `params` is always normalized to a plain key-value object (`{}` when missing/invalid)
 
-Merge order in launcher:
+Merge order in launcher (same for every child widget; payload must not be clobbered by host `config.params`):
 
-1. base fields
-2. `params` object assignment
-3. flattened `payload.params`
-4. runtime config
+1. Base fields: `debug`, `apiKey`, `apiProvider`, `loaderVersion`
+2. Scriptable runtime `config` (flattened): e.g. `widgetFamily`, `runsInWidget`, …
+3. `params` object (= normalized `payload.params`, or `{}`)
+4. Flattened `payload.params` (each key also passed at the top level for destructuring)
 
-So later layers can override earlier values.
+When the child module exports a non-empty `widgetParameter` string, the launcher also sets top-level `widgetParameter` to the resolved value (same meaning as in `scriptable-widgets/.../template`).
+
+Earlier keys are overridden by later ones only where the same property name appears again (flattened payload wins over stale keys from runtime).
 
 ## Named parameter style in child widget
 

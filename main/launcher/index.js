@@ -28,11 +28,6 @@ async function launch(params = {}) {
                 debug: !!params.debug,
                 loaderVersion: String(params.loaderVersion || DEFAULT_LOADER_VERSION),
             }
-            const familyError = validateFamilySupport(welcomeLibrary, runtimeConfig.widgetFamily)
-            if (familyError) {
-                const widget = createErrorWidget('Unsupported widget size', familyError)
-                return presentAndComplete(widget, runtimeConfig)
-            }
             const widget = await welcomeLibrary.createWidget(welcomeParams)
             return presentAndComplete(widget, runtimeConfig)
         } catch (error) {
@@ -44,7 +39,7 @@ async function launch(params = {}) {
         }
     }
 
-    const providedParam = resolveProvidedWidgetParameter(params.args, runtimeConfig)
+    const providedParam = resolveProvidedWidgetParameter(params)
     if (!providedParam || providedParam.trim().length === 0) {
         const widget = createErrorWidget(
             'Configuration required',
@@ -87,13 +82,10 @@ async function launch(params = {}) {
         })
         const targetLibrary = importModule(targetModulePath)
 
-        const childParams = normalizeChildParams(payload.params)
-        const libraryWidgetParam =
-            targetLibrary && typeof targetLibrary.widgetParameter === 'string'
-                ? targetLibrary.widgetParameter.trim()
-                : ''
+        const childParams = mergeChildParamsFromLauncherAndPayload(params, payload)
+        const libraryWidgetParam = readExportedWidgetParameterKey(targetLibrary)
         const resolvedWidgetParam = resolveWidgetParameter(libraryWidgetParam, childParams)
-        const paramRequired = libraryWidgetParam && libraryWidgetParam.length > 0
+        const paramRequired = libraryWidgetParam.length > 0
 
         if (paramRequired && (!resolvedWidgetParam || resolvedWidgetParam.trim().length === 0)) {
             const widget = createErrorWidget(
@@ -103,16 +95,14 @@ async function launch(params = {}) {
             return presentAndComplete(widget, runtimeConfig)
         }
 
-        const createWidgetParams = {
-            debug: !!params.debug,
-            apiKey: params.apiKey,
-            apiProvider: params.apiProvider,
-            loaderVersion: String(params.loaderVersion || DEFAULT_LOADER_VERSION),
-            params: childParams,
-            ...childParams,
-            ...runtimeConfig,
-        }
-        const familyError = validateFamilySupport(targetLibrary, runtimeConfig.widgetFamily)
+        const createWidgetParams = buildCreateWidgetParamsForChild(
+            params,
+            runtimeConfig,
+            childParams,
+            resolvedWidgetParam,
+            libraryWidgetParam
+        )
+        const familyError = validateChildWidgetFamily(targetLibrary, runtimeConfig.widgetFamily)
         if (familyError) {
             const widget = createErrorWidget('Unsupported widget size', familyError)
             return presentAndComplete(widget, runtimeConfig)
@@ -143,7 +133,7 @@ function createErrorWidget(title, message) {
     widget.addSpacer(6)
     widget.addText(message)
     return widget
-}   
+}
 
 function importLocalModuleLoader() {
     if (typeof importModule !== 'function') {
@@ -176,10 +166,46 @@ function validateWidgetPayload(payload) {
     if (payload.cacheKey && typeof payload.cacheKey !== 'string') {
         return 'Payload field "cacheKey" must be a string when provided.'
     }
-    if (payload.params && (typeof payload.params !== 'object' || Array.isArray(payload.params))) {
-        return 'Payload field "params" must be an object when provided.'
+    if (payload.params != null) {
+        const p = payload.params
+        const okObject = typeof p === 'object' && !Array.isArray(p)
+        const okString = typeof p === 'string'
+        if (!okObject && !okString) {
+            return 'Payload field "params" must be an object, a JSON string, or omitted.'
+        }
     }
     return null
+}
+
+function readExportedWidgetParameterKey(library) {
+    if (!library || typeof library.widgetParameter !== 'string') {
+        return ''
+    }
+    return library.widgetParameter.trim()
+}
+
+/** Passes launcher + Scriptable config + merged payload child fields into `createWidget`. */
+function buildCreateWidgetParamsForChild(
+    launcherParams,
+    runtimeConfig,
+    childParams,
+    resolvedWidgetParameter,
+    requiredParamKey
+) {
+    const child = normalizeChildParams(childParams)
+    const out = {
+        debug: !!launcherParams.debug,
+        apiKey: launcherParams.apiKey,
+        apiProvider: launcherParams.apiProvider,
+        loaderVersion: String(launcherParams.loaderVersion || DEFAULT_LOADER_VERSION),
+        ...runtimeConfig,
+        params: child,
+        ...child,
+    }
+    if (requiredParamKey) {
+        out.widgetParameter = String(resolvedWidgetParameter ?? '')
+    }
+    return out
 }
 
 function resolveWidgetParameter(requiredParamName, childParams) {
@@ -193,14 +219,79 @@ function resolveWidgetParameter(requiredParamName, childParams) {
     return ''
 }
 
+const RESERVED_PAYLOAD_ROOT_KEYS = new Set(['moduleUrl', 'manifestUrl', 'cacheKey', 'params'])
+
+/** Merges non-reserved payload root keys with `payload.params` (nested wins on duplicate keys). */
+function mergePayloadChildParams(payload) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return {}
+    }
+    const fromNested = normalizeChildParams(payload.params)
+    const fromRoot = {}
+    for (const key of Object.keys(payload)) {
+        if (!RESERVED_PAYLOAD_ROOT_KEYS.has(key)) {
+            fromRoot[key] = payload[key]
+        }
+    }
+    return { ...fromRoot, ...fromNested }
+}
+
+const LAUNCHER_ARG_KEYS_SKIP = new Set(['widgetParameter', 'fileURLs', 'queryParameters', 'when', 'params'])
+
+/** Host-side `config.params` / `args` (Scriptable); merged under payload in `mergeChildParamsFromLauncherAndPayload`. */
+function childParamsFromLauncherArgs(launcherParams) {
+    const out = {}
+    if (!launcherParams || typeof launcherParams !== 'object') {
+        return out
+    }
+    const cfg = launcherParams.config
+    if (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) {
+        Object.assign(out, normalizeChildParams(cfg.params))
+    }
+    const args = launcherParams.args
+    if (args && typeof args === 'object' && !Array.isArray(args)) {
+        Object.assign(out, normalizeChildParams(args.params))
+        for (const key of Object.keys(args)) {
+            if (LAUNCHER_ARG_KEYS_SKIP.has(key)) {
+                continue
+            }
+            out[key] = args[key]
+        }
+    }
+    return out
+}
+
+function mergeChildParamsFromLauncherAndPayload(launcherParams, payload) {
+    const fromHost = childParamsFromLauncherArgs(launcherParams)
+    const fromPayload = mergePayloadChildParams(payload)
+    return normalizeChildParams({ ...fromHost, ...fromPayload })
+}
+
 function normalizeChildParams(rawParams) {
-    if (!rawParams || typeof rawParams !== 'object' || Array.isArray(rawParams)) {
+    if (rawParams == null) {
+        return {}
+    }
+    if (typeof rawParams === 'string') {
+        const trimmed = rawParams.trim()
+        if (!trimmed) {
+            return {}
+        }
+        try {
+            const parsed = JSON.parse(trimmed)
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                return parsed
+            }
+        } catch (_) {}
+        return {}
+    }
+    if (typeof rawParams !== 'object' || Array.isArray(rawParams)) {
         return {}
     }
     return rawParams
 }
 
-function validateFamilySupport(library, requestedFamilyRaw) {
+/** If the child exports `supportedFamilies`, require the current `widgetFamily` to be listed. */
+function validateChildWidgetFamily(library, requestedFamilyRaw) {
     const requestedFamily = normalizeWidgetFamily(requestedFamilyRaw)
     if (!requestedFamily) {
         return null
@@ -230,19 +321,42 @@ function readSupportedFamilies(library) {
 }
 
 function normalizeWidgetFamily(value) {
-    if (!value || typeof value !== 'string') {
+    if (value == null || value === '') {
         return null
     }
-    const normalized = value.trim().toLowerCase()
+    const normalized = String(value).trim().toLowerCase()
+    if (!normalized) {
+        return null
+    }
     return ALLOWED_WIDGET_FAMILIES.indexOf(normalized) !== -1 ? normalized : null
 }
 
-function resolveProvidedWidgetParameter(runtimeArgs, runtimeConfig) {
-    if (runtimeArgs && typeof runtimeArgs.widgetParameter === 'string') {
-        return runtimeArgs.widgetParameter
+function coerceWidgetParameterString(value) {
+    if (value == null) return ''
+    if (typeof value === 'string') return value.trim()
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+    if (typeof Data !== 'undefined' && value instanceof Data) {
+        try {
+            const raw = value.toRawString()
+            if (typeof raw === 'string' && raw.trim()) return raw.trim()
+        } catch (_) {}
     }
-    if (runtimeConfig && typeof runtimeConfig.widgetParameter === 'string') {
-        return runtimeConfig.widgetParameter
+    return ''
+}
+
+/** Base64 JSON payload from `widgetParameter` (launcher / args / config). */
+function resolveProvidedWidgetParameter(launcherParams) {
+    if (!launcherParams || typeof launcherParams !== 'object') {
+        return ''
+    }
+    const candidates = [
+        launcherParams.widgetParameter,
+        launcherParams.args && launcherParams.args.widgetParameter,
+        launcherParams.config && launcherParams.config.widgetParameter,
+    ]
+    for (const c of candidates) {
+        const s = coerceWidgetParameterString(c)
+        if (s) return s
     }
     return ''
 }
