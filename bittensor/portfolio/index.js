@@ -24,7 +24,7 @@ const version = "1.0.3";
  * No single required widget parameter; use payload.params.
  */
 const widgetParameter = "";
-const supportedFamilies = ["small", "medium", "large"];
+const supportedFamilies = ["medium", "large"];
 
 // ============================
 // API
