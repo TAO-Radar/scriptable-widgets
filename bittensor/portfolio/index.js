@@ -44,8 +44,9 @@ function validateHostWidgetFamily(widgetFamilyRaw) {
 // ============================
 const TAO_STATS_ACCOUNT_URL = "https://api.taostats.io/api/account/latest/v1";
 const TAO_PRICE_URL = "https://api.binance.com/api/v3/ticker/price?symbol=TAOUSDT";
-const CACHE_DIR_NAME = "tao-radar-cache";
 const BALANCE_CACHE_FILE = "portfolio-balance-cache.json";
+const CACHE_FRESH_MS = 5 * 60 * 1000; // 5 minute cache
+const STALE_CACHE_MARKER = "⏱";
 
 // IMPORTANT: header must stay EXACTLY as provided (not from variables)
 const TAO_STATS_HEADERS = {
@@ -264,22 +265,32 @@ async function fetchTaoUsdPrice() {
 }
 
 async function fetchAllAccounts(addresses, taoToUsd) {
-  const out = [];
   const cachedBalancesByAddress = readCachedBalancesByAddress();
+  const fetchOrder = buildAddressFetchOrder(addresses, cachedBalancesByAddress);
+  const rowsByAddress = {};
 
-  for (let i = 0; i < addresses.length; i++) {
-    const addr = addresses[i];
+  for (let i = 0; i < fetchOrder.length; i++) {
+    const addr = fetchOrder[i];
+    const cached = cachedBalancesByAddress[addr];
+    const cachedAtMs = parseCachedAtMs(cached);
+    if (Number.isFinite(cachedAtMs) && Date.now() - cachedAtMs < CACHE_FRESH_MS) {
+      const rowFromFreshCache = buildRowFromCached(addr, cached, taoToUsd);
+      if (rowFromFreshCache) {
+        rowsByAddress[addr] = rowFromFreshCache;
+        continue;
+      }
+    }
     try {
       const account = await fetchAccount(addr);
       if (!account) {
-        out.push({
+        rowsByAddress[addr] = {
           address: addr,
           totalBalance: null,
           change24h: null,
           totalBalanceUsd: null,
           change24hUsd: null,
           error: "No data for address",
-        });
+        };
         continue;
       }
 
@@ -287,14 +298,14 @@ async function fetchAllAccounts(addresses, taoToUsd) {
       const balanceTotal24 = toNumber(account.balance_total_24hr_ago);
 
       if (!Number.isFinite(balanceTotal) || !Number.isFinite(balanceTotal24)) {
-        out.push({
+        rowsByAddress[addr] = {
           address: addr,
           totalBalance: null,
           change24h: null,
           totalBalanceUsd: null,
           change24hUsd: null,
           error: "Invalid balance values",
-        });
+        };
         continue;
       }
 
@@ -305,42 +316,41 @@ async function fetchAllAccounts(addresses, taoToUsd) {
       const change24hUsd =
         Number.isFinite(taoToUsd) ? ceil2AwayFromZero(change24h * taoToUsd) : null;
 
-      out.push({ address: addr, totalBalance, change24h, totalBalanceUsd, change24hUsd });
+      rowsByAddress[addr] = { address: addr, totalBalance, change24h, totalBalanceUsd, change24hUsd };
       cachedBalancesByAddress[addr] = {
         totalBalance,
         change24h,
         cachedAt: new Date().toISOString(),
       };
     } catch (e) {
-      const cached = cachedBalancesByAddress[addr];
-      if (cached && Number.isFinite(cached.totalBalance) && Number.isFinite(cached.change24h)) {
-        const totalBalanceUsd =
-          Number.isFinite(taoToUsd) ? ceil2AwayFromZero(cached.totalBalance * taoToUsd) : null;
-        const change24hUsd =
-          Number.isFinite(taoToUsd) ? ceil2AwayFromZero(cached.change24h * taoToUsd) : null;
-        out.push({
-          address: addr,
-          totalBalance: cached.totalBalance,
-          change24h: cached.change24h,
-          totalBalanceUsd,
-          change24hUsd,
-          isCached: true,
-        });
+      const rowFromCachedFallback = buildRowFromCached(addr, cached, taoToUsd);
+      if (rowFromCachedFallback) {
+        rowsByAddress[addr] = { ...rowFromCachedFallback, isStaleCachedFallback: true };
         continue;
       }
-      out.push({
+      rowsByAddress[addr] = {
         address: addr,
         totalBalance: null,
         change24h: null,
         totalBalanceUsd: null,
         change24hUsd: null,
         error: e && e.message ? e.message : String(e),
-      });
+      };
     }
   }
 
   writeCachedBalancesByAddress(cachedBalancesByAddress);
-  return out;
+  return addresses.map((addr) => {
+    if (rowsByAddress[addr]) return rowsByAddress[addr];
+    return {
+      address: addr,
+      totalBalance: null,
+      change24h: null,
+      totalBalanceUsd: null,
+      change24hUsd: null,
+      error: "Unknown fetch result",
+    };
+  });
 }
 
 // ============================
@@ -385,13 +395,19 @@ function drawTable(frame, rows, currencies) {
 
   const colAddr = createColumn("Address", ENV.colors.white);
   table.addSpacer();
-  const colTotal = createColumn("Total", ENV.colors.white);
+  const colTotal = createColumn("Balance", ENV.colors.white);
   table.addSpacer();
   const colDaily = createColumn("24hr Change", ENV.colors.white);
 
   rows.forEach((r) => {
     if (!r.error) {
-      addText(colAddr, shortAddress(r.address), ENV.fonts.value, ENV.colors.gray, true);
+      addText(
+        colAddr,
+        r.isStaleCachedFallback ? `${shortAddress(r.address)} ${STALE_CACHE_MARKER}` : shortAddress(r.address),
+        ENV.fonts.value,
+        ENV.colors.gray,
+        true
+      );
       addText(colTotal, formatValueByCurrencies(r, "total", currencies), ENV.fonts.value, ENV.colors.white, true);
       addText(
         colDaily,
@@ -426,7 +442,7 @@ function drawSmall(frame, rows, currencies, taoToUsd) {
   header.layoutHorizontally();
   addText(header, "Address", ENV.fonts.columnHeader, ENV.colors.gray, true);
   header.addSpacer();
-  addText(header, "Total", ENV.fonts.columnHeader, ENV.colors.white, true);
+  addText(header, "Balance", ENV.fonts.columnHeader, ENV.colors.white, true);
   header.addSpacer();
   addText(header, "24hr Change", ENV.fonts.columnHeader, ENV.colors.gray, true);
 
@@ -436,7 +452,10 @@ function drawSmall(frame, rows, currencies, taoToUsd) {
     const row = frame.addStack();
     row.layoutHorizontally();
 
-    addText(row, shortAddress(r.address), ENV.fonts.value, r.error ? ENV.colors.err : ENV.colors.gray, true);
+    const addrText = r.isStaleCachedFallback
+      ? `${shortAddress(r.address)} ${STALE_CACHE_MARKER}`
+      : shortAddress(r.address);
+    addText(row, addrText, ENV.fonts.value, r.error ? ENV.colors.err : ENV.colors.gray, true);
     row.addSpacer();
     addText(
       row,
@@ -814,11 +833,16 @@ function portfolioCacheFilePath() {
   try {
     // @ts-ignore Scriptable global
     const fm = FileManager.local();
-    const dir = fm.joinPath(fm.documentsDirectory(), CACHE_DIR_NAME);
-    if (!fm.fileExists(dir)) {
-      fm.createDirectory(dir, true);
+    const runtimeModule = typeof module !== "undefined" ? /** @type {any} */ (module) : null;
+    if (runtimeModule && typeof runtimeModule.filename === "string") {
+      const scriptPath = runtimeModule.filename;
+      const scriptDir = scriptPath.replace(fm.fileName(scriptPath, true), "");
+      if (scriptDir) {
+        return fm.joinPath(scriptDir, BALANCE_CACHE_FILE);
+      }
     }
-    return fm.joinPath(dir, BALANCE_CACHE_FILE);
+    // Fallback for runtimes where module.filename is unavailable.
+    return fm.joinPath(fm.documentsDirectory(), BALANCE_CACHE_FILE);
   } catch (_) {
     return null;
   }
@@ -852,6 +876,53 @@ function writeCachedBalancesByAddress(cacheObj) {
   } catch (_) {
     // ignore cache write failures
   }
+}
+
+function buildAddressFetchOrder(addresses, cachedBalancesByAddress) {
+  const ranked = addresses.map((address, index) => {
+    const cached = cachedBalancesByAddress[address];
+    if (!cached || typeof cached !== "object") {
+      return { address, index, priority: 0, cachedAtMs: Number.POSITIVE_INFINITY };
+    }
+    const cachedAtMs = Date.parse(String(cached.cachedAt || ""));
+    return {
+      address,
+      index,
+      priority: 1,
+      cachedAtMs: Number.isFinite(cachedAtMs) ? cachedAtMs : Number.NEGATIVE_INFINITY,
+    };
+  });
+
+  ranked.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    if (a.cachedAtMs !== b.cachedAtMs) return a.cachedAtMs - b.cachedAtMs;
+    return a.index - b.index;
+  });
+
+  return ranked.map((entry) => entry.address);
+}
+
+function parseCachedAtMs(cached) {
+  if (!cached || typeof cached !== "object") return NaN;
+  const cachedAtMs = Date.parse(String(cached.cachedAt || ""));
+  return Number.isFinite(cachedAtMs) ? cachedAtMs : NaN;
+}
+
+function buildRowFromCached(address, cached, taoToUsd) {
+  if (!cached || !Number.isFinite(cached.totalBalance) || !Number.isFinite(cached.change24h)) {
+    return null;
+  }
+  const totalBalanceUsd =
+    Number.isFinite(taoToUsd) ? ceil2AwayFromZero(cached.totalBalance * taoToUsd) : null;
+  const change24hUsd =
+    Number.isFinite(taoToUsd) ? ceil2AwayFromZero(cached.change24h * taoToUsd) : null;
+  return {
+    address,
+    totalBalance: cached.totalBalance,
+    change24h: cached.change24h,
+    totalBalanceUsd,
+    change24hUsd,
+  };
 }
 
 // ============================
