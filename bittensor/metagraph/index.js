@@ -2,7 +2,6 @@
 // Configuration
 // ============================
 
-const version = '0.1.9';
 const widgetParameter = '';
 const supportedFamilies = ['small', 'medium', 'large'];
 const ALLOWED_WIDGET_FAMILIES = ['small', 'medium', 'large'];
@@ -615,7 +614,6 @@ function addText(frame, text, size, color, isSemibold = false) {
 }
 
 module.exports = {
-  version,
   widgetParameter,
   supportedFamilies,
   launch,

@@ -15,10 +15,7 @@
  * Works with TAO Radar loader (main.js).
  *
  * @author Gelloiss <gelloiss@gmail.com>
- * @version 1.0.4
  */
-
-const version = "1.0.4";
 
 /**
  * No single required widget parameter; use payload.params.
@@ -862,7 +859,6 @@ function writeCachedBalancesByAddress(cacheObj) {
 // ============================
 
 module.exports = {
-  version,
   widgetParameter,
   supportedFamilies,
   launch,
