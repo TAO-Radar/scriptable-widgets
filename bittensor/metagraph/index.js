@@ -5,6 +5,22 @@
 const version = '0.1.9';
 const widgetParameter = '';
 const supportedFamilies = ['small', 'medium', 'large'];
+const ALLOWED_WIDGET_FAMILIES = ['small', 'medium', 'large'];
+
+/** When `runsInWidget === true`, reject unsupported or missing `widgetFamily` before `createWidget`. */
+function validateHostWidgetFamily(widgetFamilyRaw) {
+  const norm = String(widgetFamilyRaw ?? '')
+    .trim()
+    .toLowerCase();
+  if (!norm || ALLOWED_WIDGET_FAMILIES.indexOf(norm) === -1) {
+    return 'Missing or invalid widgetFamily from Scriptable. Expected: small, medium, or large.';
+  }
+  if (supportedFamilies.indexOf(norm) === -1) {
+    return `This widget does not support "${norm}". Supported: ${supportedFamilies.join(', ')}.`;
+  }
+  return null;
+}
+
 const DEFAULT_API_CONFIG = {
   taoStatsBaseUrl: 'https://notaostats.taoradar.space/api',
   getTaoPriceUrl: 'https://api.binance.com/api/v3/ticker/price?symbol=TAOUSDT',
@@ -167,6 +183,16 @@ async function launch(params = {}) {
 
     normalizedParams.netuid = userInput.netuid;
     normalizedParams.search = userInput.search;
+  }
+
+  if (runtimeConfig.runsInWidget === true) {
+    const familyErr = validateHostWidgetFamily(runtimeConfig.widgetFamily);
+    if (familyErr) {
+      const w = createErrorWidget(`Unsupported widget size\n${familyErr}`);
+      Script.setWidget(w);
+      Script.complete();
+      return w;
+    }
   }
 
   const widget = await createWidget({

@@ -82,6 +82,16 @@ async function launch(params = {}) {
         })
         const targetLibrary = importModule(targetModulePath)
 
+        // Scriptable sets runsInWidget === true on the home screen; enforce supportedFamilies only then.
+        let familyError = null
+        if (runtimeConfig.runsInWidget === true) {
+            familyError = validateChildWidgetFamily(targetLibrary, runtimeConfig.widgetFamily)
+        }
+        if (familyError) {
+            const widget = createErrorWidget('Unsupported widget size', familyError)
+            return presentAndComplete(widget, runtimeConfig)
+        }
+
         const childParams = mergeChildParamsFromLauncherAndPayload(params, payload)
         const libraryWidgetParam = readExportedWidgetParameterKey(targetLibrary)
         const resolvedWidgetParam = resolveWidgetParameter(libraryWidgetParam, childParams)
@@ -102,11 +112,6 @@ async function launch(params = {}) {
             resolvedWidgetParam,
             libraryWidgetParam
         )
-        const familyError = validateChildWidgetFamily(targetLibrary, runtimeConfig.widgetFamily)
-        if (familyError) {
-            const widget = createErrorWidget('Unsupported widget size', familyError)
-            return presentAndComplete(widget, runtimeConfig)
-        }
         const widget = await targetLibrary.createWidget(createWidgetParams)
         return presentAndComplete(widget, runtimeConfig)
     } catch (error) {
@@ -290,25 +295,35 @@ function normalizeChildParams(rawParams) {
     return rawParams
 }
 
-/** If the child exports `supportedFamilies`, require the current `widgetFamily` to be listed. */
+/**
+ * Called only when `config.runsInWidget === true` (home-screen widget).
+ * Child must export non-empty supportedFamilies; host must supply a valid widgetFamily.
+ */
 function validateChildWidgetFamily(library, requestedFamilyRaw) {
+    const { error, families } = readStrictSupportedFamilies(library)
+    if (error) {
+        return error
+    }
     const requestedFamily = normalizeWidgetFamily(requestedFamilyRaw)
     if (!requestedFamily) {
-        return null
+        return 'Missing or invalid widgetFamily from Scriptable. Expected: small, medium, or large.'
     }
-    const supportedFamilies = readSupportedFamilies(library)
-    if (!supportedFamilies) {
-        return null
+    if (families.indexOf(requestedFamily) === -1) {
+        return `This script does not support "${requestedFamily}". Supported: ${families.join(', ')}.`
     }
-    if (supportedFamilies.indexOf(requestedFamily) !== -1) {
-        return null
-    }
-    return `This script does not support "${requestedFamily}". Supported: ${supportedFamilies.join(', ')}.`
+    return null
 }
 
-function readSupportedFamilies(library) {
+/**
+ * @returns {{ error: null, families: string[] } | { error: string, families: null }}
+ */
+function readStrictSupportedFamilies(library) {
     if (!library || !Array.isArray(library.supportedFamilies)) {
-        return null
+        return {
+            error:
+                'Child widget must export supportedFamilies (e.g. ["small","large"]) — subset of small, medium, large.',
+            families: null,
+        }
     }
     const normalized = []
     for (const family of library.supportedFamilies) {
@@ -317,7 +332,14 @@ function readSupportedFamilies(library) {
             normalized.push(value)
         }
     }
-    return normalized.length > 0 ? normalized : null
+    if (normalized.length === 0) {
+        return {
+            error:
+                'Child widget supportedFamilies must include at least one valid name: small, medium, or large.',
+            families: null,
+        }
+    }
+    return { error: null, families: normalized }
 }
 
 function normalizeWidgetFamily(value) {

@@ -2,7 +2,7 @@
 // These must be at the very top of the file. Do not edit.
 // icon-color: blue; icon-glyph: code;
 //@ts-check
-/* global Alert, Color, Font, ListWidget, Request, Script, args, config */
+/* global Alert, Color, FileManager, Font, ListWidget, Request, Script, args, config */
 
 /**
  * TAO Radar Preset Portfolio Widget
@@ -15,22 +15,40 @@
  * Works with TAO Radar loader (main.js).
  *
  * @author Gelloiss <gelloiss@gmail.com>
- * @version 1.0.3
+ * @version 1.0.4
  */
 
-const version = "1.0.3";
+const version = "1.0.4";
 
 /**
  * No single required widget parameter; use payload.params.
  */
 const widgetParameter = "";
-const supportedFamilies = ["medium", "large"];
+const supportedFamilies = ["small", "medium", "large"];
+
+const ALLOWED_WIDGET_FAMILIES = ["small", "medium", "large"];
+
+/** When `runsInWidget === true`, reject unsupported or missing `widgetFamily` before `createWidget`. */
+function validateHostWidgetFamily(widgetFamilyRaw) {
+  const norm = String(widgetFamilyRaw ?? "")
+    .trim()
+    .toLowerCase();
+  if (!norm || ALLOWED_WIDGET_FAMILIES.indexOf(norm) === -1) {
+    return "Missing or invalid widgetFamily from Scriptable. Expected: small, medium, or large.";
+  }
+  if (supportedFamilies.indexOf(norm) === -1) {
+    return `This widget does not support "${norm}". Supported: ${supportedFamilies.join(", ")}.`;
+  }
+  return null;
+}
 
 // ============================
 // API
 // ============================
 const TAO_STATS_ACCOUNT_URL = "https://api.taostats.io/api/account/latest/v1";
 const TAO_PRICE_URL = "https://api.binance.com/api/v3/ticker/price?symbol=TAOUSDT";
+const CACHE_DIR_NAME = "tao-radar-cache";
+const BALANCE_CACHE_FILE = "portfolio-balance-cache.json";
 
 // IMPORTANT: header must stay EXACTLY as provided (not from variables)
 const TAO_STATS_HEADERS = {
@@ -151,6 +169,16 @@ async function launch(params = {}) {
     normalizedParams.currencies = userInput.currencies;
   }
 
+  if (runtimeConfig.runsInWidget === true) {
+    const familyErr = validateHostWidgetFamily(runtimeConfig.widgetFamily);
+    if (familyErr) {
+      const w = createErrorWidget(`Unsupported widget size\n${familyErr}`);
+      Script.setWidget(w);
+      Script.complete();
+      return w;
+    }
+  }
+
   const widget = await createWidget({
     debug: !!params.debug,
     apiProvider: typeof params.apiProvider === "string" ? params.apiProvider : "TaoStats",
@@ -239,67 +267,82 @@ async function fetchTaoUsdPrice() {
 }
 
 async function fetchAllAccounts(addresses, taoToUsd) {
-  const concurrency = 5;
   const out = [];
+  const cachedBalancesByAddress = readCachedBalancesByAddress();
 
-  for (let i = 0; i < addresses.length; i += concurrency) {
-    const batch = addresses.slice(i, i + concurrency);
+  for (let i = 0; i < addresses.length; i++) {
+    const addr = addresses[i];
+    try {
+      const account = await fetchAccount(addr);
+      if (!account) {
+        out.push({
+          address: addr,
+          totalBalance: null,
+          change24h: null,
+          totalBalanceUsd: null,
+          change24hUsd: null,
+          error: "No data for address",
+        });
+        continue;
+      }
 
-    const results = await Promise.all(
-      batch.map(async (addr) => {
-        try {
-          const account = await fetchAccount(addr);
-          if (!account) {
-            return {
-              address: addr,
-              totalBalance: null,
-              change24h: null,
-              totalBalanceUsd: null,
-              change24hUsd: null,
-              error: "No data for address",
-            };
-          }
+      const balanceTotal = toNumber(account.balance_total);
+      const balanceTotal24 = toNumber(account.balance_total_24hr_ago);
 
-          const balanceTotal = toNumber(account.balance_total);
-          const balanceTotal24 = toNumber(account.balance_total_24hr_ago);
+      if (!Number.isFinite(balanceTotal) || !Number.isFinite(balanceTotal24)) {
+        out.push({
+          address: addr,
+          totalBalance: null,
+          change24h: null,
+          totalBalanceUsd: null,
+          change24hUsd: null,
+          error: "Invalid balance values",
+        });
+        continue;
+      }
 
-          if (!Number.isFinite(balanceTotal) || !Number.isFinite(balanceTotal24)) {
-            return {
-              address: addr,
-              totalBalance: null,
-              change24h: null,
-              totalBalanceUsd: null,
-              change24hUsd: null,
-              error: "Invalid balance values",
-            };
-          }
+      const totalBalance = ceil2AwayFromZero(balanceTotal * RAO);
+      const change24h = ceil2AwayFromZero((balanceTotal - balanceTotal24) * RAO);
+      const totalBalanceUsd =
+        Number.isFinite(taoToUsd) ? ceil2AwayFromZero(totalBalance * taoToUsd) : null;
+      const change24hUsd =
+        Number.isFinite(taoToUsd) ? ceil2AwayFromZero(change24h * taoToUsd) : null;
 
-          // totalBalance = balance_total * 1e-9
-          // change24h     = (balance_total - balance_total_24hr_ago) * 1e-9  (positive = growth)
-          const totalBalance = ceil2AwayFromZero(balanceTotal * RAO);
-          const change24h = ceil2AwayFromZero((balanceTotal - balanceTotal24) * RAO);
-          const totalBalanceUsd =
-            Number.isFinite(taoToUsd) ? ceil2AwayFromZero(totalBalance * taoToUsd) : null;
-          const change24hUsd =
-            Number.isFinite(taoToUsd) ? ceil2AwayFromZero(change24h * taoToUsd) : null;
-
-          return { address: addr, totalBalance, change24h, totalBalanceUsd, change24hUsd };
-        } catch (e) {
-          return {
-            address: addr,
-            totalBalance: null,
-            change24h: null,
-            totalBalanceUsd: null,
-            change24hUsd: null,
-            error: e && e.message ? e.message : String(e),
-          };
-        }
-      })
-    );
-
-    out.push(...results);
+      out.push({ address: addr, totalBalance, change24h, totalBalanceUsd, change24hUsd });
+      cachedBalancesByAddress[addr] = {
+        totalBalance,
+        change24h,
+        cachedAt: new Date().toISOString(),
+      };
+    } catch (e) {
+      const cached = cachedBalancesByAddress[addr];
+      if (cached && Number.isFinite(cached.totalBalance) && Number.isFinite(cached.change24h)) {
+        const totalBalanceUsd =
+          Number.isFinite(taoToUsd) ? ceil2AwayFromZero(cached.totalBalance * taoToUsd) : null;
+        const change24hUsd =
+          Number.isFinite(taoToUsd) ? ceil2AwayFromZero(cached.change24h * taoToUsd) : null;
+        out.push({
+          address: addr,
+          totalBalance: cached.totalBalance,
+          change24h: cached.change24h,
+          totalBalanceUsd,
+          change24hUsd,
+          isCached: true,
+        });
+        continue;
+      }
+      out.push({
+        address: addr,
+        totalBalance: null,
+        change24h: null,
+        totalBalanceUsd: null,
+        change24hUsd: null,
+        error: e && e.message ? e.message : String(e),
+      });
+    }
   }
 
+  writeCachedBalancesByAddress(cachedBalancesByAddress);
   return out;
 }
 
@@ -768,6 +811,50 @@ function normalizeCurrencies(value) {
     }
   }
   return orderedUnique.length > 0 ? orderedUnique : ["TAO"];
+}
+
+function portfolioCacheFilePath() {
+  try {
+    // @ts-ignore Scriptable global
+    const fm = FileManager.local();
+    const dir = fm.joinPath(fm.documentsDirectory(), CACHE_DIR_NAME);
+    if (!fm.fileExists(dir)) {
+      fm.createDirectory(dir, true);
+    }
+    return fm.joinPath(dir, BALANCE_CACHE_FILE);
+  } catch (_) {
+    return null;
+  }
+}
+
+function readCachedBalancesByAddress() {
+  const path = portfolioCacheFilePath();
+  if (!path) return {};
+  try {
+    // @ts-ignore Scriptable global
+    const fm = FileManager.local();
+    if (!fm.fileExists(path)) return {};
+    const raw = fm.readString(path);
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    return parsed;
+  } catch (_) {
+    return {};
+  }
+}
+
+function writeCachedBalancesByAddress(cacheObj) {
+  const path = portfolioCacheFilePath();
+  if (!path) return;
+  try {
+    // @ts-ignore Scriptable global
+    const fm = FileManager.local();
+    fm.writeString(path, JSON.stringify(cacheObj));
+  } catch (_) {
+    // ignore cache write failures
+  }
 }
 
 // ============================
